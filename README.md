@@ -1,1 +1,1 @@
-![# Interactive Data Visualization Tool](app_logo)
+![Interactive Data Visualization Tool](app_logo.png)
