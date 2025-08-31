@@ -1,1 +1,1 @@
-# data-visualization-tool
+# Interactive Data Visualization Tool
