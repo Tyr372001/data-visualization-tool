@@ -1,16 +1,29 @@
-# interactive_visualization_tool.py
+# interactive_feedback_app.py
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from PIL import Image
-from io import BytesIO
+import textwrap
 import re
+import os
 import numpy as np
+from io import BytesIO
+
+# --- Configuration ---
+OUTPUT_DIR = "Output_Visuals"
 
 # --- Utilities ---
+def create_output_dir():
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+
 def sanitize_filename(name):
     return re.sub(r'[\\/:"*?<>|]+', '_', name).strip()
+
+def calculate_cumulative_percentage(series):
+    valid = series.dropna()
+    score = valid.mean() if len(valid) > 0 else 0
+    return score
 
 def add_download_button(fig, title):
     buf = BytesIO()
@@ -23,20 +36,63 @@ def add_download_button(fig, title):
         mime="image/png"
     )
 
-# --- Header with Logos ---
-col1, col2 = st.columns([1, 3])
-try:
-    app_logo = Image.open("app_logo.png")
-    uni_logo = Image.open("university_logo.png")
-    col1.image(app_logo, width=100)
-    col2.image(uni_logo, width=150)
-except Exception as e:
-    st.warning(f"Logos not found: {e}")
+# --- Plotting Functions ---
+def plot_bar(df, group_col, value_col, title, xlabel, ylabel, palette, fig_w, fig_h, title_font, label_font, tick_font, x_rotation):
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    sns.barplot(data=df, x=group_col, y=value_col, palette=palette, ax=ax)
+    ax.set_title(title, fontsize=title_font)
+    ax.set_xlabel(xlabel, fontsize=label_font)
+    ax.set_ylabel(ylabel, fontsize=label_font)
+    ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
+    st.pyplot(fig)
+    add_download_button(fig, title)
+    return fig
 
+def plot_box(df, group_col, value_col, title, xlabel, ylabel, palette, fig_w, fig_h, title_font, label_font, tick_font, x_rotation):
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    sns.boxplot(data=df, x=group_col, y=value_col, palette=palette, ax=ax)
+    ax.set_title(title, fontsize=title_font)
+    ax.set_xlabel(xlabel, fontsize=label_font)
+    ax.set_ylabel(ylabel, fontsize=label_font)
+    ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
+    st.pyplot(fig)
+    add_download_button(fig, title)
+    return fig
+
+def plot_hist(df, value_col, title, xlabel, ylabel, palette, fig_w, fig_h, title_font, label_font, tick_font, bins):
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    sns.histplot(df[value_col], kde=True, color=palette, bins=bins, ax=ax)
+    ax.set_title(title, fontsize=title_font)
+    ax.set_xlabel(xlabel, fontsize=label_font)
+    ax.set_ylabel(ylabel, fontsize=label_font)
+    ax.tick_params(axis='x', labelsize=tick_font)
+    st.pyplot(fig)
+    add_download_button(fig, title)
+    return fig
+
+def plot_pie(df, group_col, value_col, title, donut_width, title_font, pct_font, show_pct):
+    fig, ax = plt.subplots(figsize=(6,6))
+    data = df.groupby(group_col)[value_col].mean().reset_index()
+    scores = data[value_col].tolist()
+    labels = data[group_col].tolist()
+    wedges, texts = ax.pie(scores, labels=labels, startangle=90, colors=sns.color_palette("pastel", len(labels)),
+                           wedgeprops={'width': donut_width, 'edgecolor': 'white'})
+    if show_pct:
+        for i, p in enumerate(wedges):
+            ang = (p.theta2 - p.theta1)/2. + p.theta1
+            y = np.sin(np.deg2rad(ang))
+            x = np.cos(np.deg2rad(ang))
+            ax.text(x*0.6, y*0.6, f'{scores[i]:.1f}', ha='center', va='center', fontsize=pct_font)
+    ax.set_title(title, fontsize=title_font)
+    st.pyplot(fig)
+    add_download_button(fig, title)
+    return fig
+
+# --- Streamlit App ---
+st.set_page_config(page_title="Data Visualization Tool", layout="wide")
 st.title("Data Visualization Tool")
-st.write("Upload any CSV and interactively visualize your data.")
+st.markdown("Upload any CSV and interactively visualize your data.")
 
-# --- File upload ---
 uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
 if uploaded_file:
     try:
@@ -45,15 +101,17 @@ if uploaded_file:
         st.error(f"Error loading CSV: {e}")
         st.stop()
 
+    create_output_dir()
+
     numeric_cols = df.select_dtypes(include='number').columns.tolist()
     categorical_cols = df.select_dtypes(exclude='number').columns.tolist()
 
-    # Sidebar controls
-    st.sidebar.header("Column Selection & Formula")
-    group_col = st.sidebar.selectbox("Categorical Column (for grouping)", [None]+categorical_cols)
-    value_col = st.sidebar.selectbox("Numeric Column (for value)", numeric_cols)
-    custom_formula = st.sidebar.text_input("Custom Formula (optional, e.g., (ColA + ColB)/2)")
+    st.sidebar.header("Column Selection")
+    group_col = st.sidebar.selectbox("Select Categorical Column (for grouping)", [None]+categorical_cols)
+    value_col = st.sidebar.selectbox("Select Numeric Column (for value)", numeric_cols)
 
+    st.sidebar.header("Custom Formula (optional)")
+    custom_formula = st.sidebar.text_input("Enter formula using numeric columns (e.g., (ColA + ColB)/2)")
     if custom_formula:
         try:
             df["CustomCol"] = pd.eval(custom_formula, engine='python', local_dict=df.to_dict('series'))
@@ -62,8 +120,9 @@ if uploaded_file:
         except Exception as e:
             st.error(f"Error in formula: {e}")
 
-    st.sidebar.header("Chart Settings")
-    chart_type = st.sidebar.selectbox("Select Chart Type", ["Bar","Boxplot","Pie","Line","Scatter","Area","Violin","Histogram","Pairplot"])
+    st.sidebar.header("Chart Type & Settings")
+    chart_type = st.sidebar.selectbox("Select Chart Type", ["Bar", "Boxplot", "Histogram", "Pie"])
+
     fig_w = st.sidebar.slider("Figure width", 5, 20, 12)
     fig_h = st.sidebar.slider("Figure height", 4, 15, 8)
     title_font = st.sidebar.slider("Title font size", 10, 30, 16)
@@ -76,122 +135,18 @@ if uploaded_file:
     show_pct = st.sidebar.checkbox("Show values on Pie chart", True)
     chart_title = st.sidebar.text_input("Chart Title", "Data Visualization")
 
-    # --- Plotting Functions ---
-    def plot_bar(df, group_col, value_col):
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        sns.barplot(data=df, x=group_col, y=value_col, palette=palette, ax=ax)
-        ax.set_title(chart_title, fontsize=title_font)
-        ax.set_xlabel(group_col, fontsize=label_font)
-        ax.set_ylabel(value_col, fontsize=label_font)
-        ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
-        st.pyplot(fig)
-        add_download_button(fig, chart_title)
-
-    def plot_box(df, group_col, value_col):
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        sns.boxplot(data=df, x=group_col, y=value_col, palette=palette, ax=ax)
-        ax.set_title(chart_title, fontsize=title_font)
-        ax.set_xlabel(group_col, fontsize=label_font)
-        ax.set_ylabel(value_col, fontsize=label_font)
-        ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
-        st.pyplot(fig)
-        add_download_button(fig, chart_title)
-
-    def plot_pie(df, group_col, value_col):
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        data = df.groupby(group_col)[value_col].mean().reset_index()
-        scores = data[value_col].tolist()
-        labels = data[group_col].tolist()
-        wedges, texts = ax.pie(scores, labels=labels, startangle=90, colors=sns.color_palette("pastel", len(labels)),
-                               wedgeprops={'width': donut_width, 'edgecolor': 'white'})
-        if show_pct:
-            for i, p in enumerate(wedges):
-                ang = (p.theta2 - p.theta1)/2. + p.theta1
-                y = np.sin(np.deg2rad(ang))
-                x = np.cos(np.deg2rad(ang))
-                ax.text(x*0.6, y*0.6, f'{scores[i]:.1f}', ha='center', va='center', fontsize=tick_font)
-        ax.set_title(chart_title, fontsize=title_font)
-        st.pyplot(fig)
-        add_download_button(fig, chart_title)
-
-    def plot_line(df, x_col, y_col):
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        ax.plot(df[x_col], df[y_col], marker='o', color=sns.color_palette(palette)[0])
-        ax.set_title(chart_title, fontsize=title_font)
-        ax.set_xlabel(x_col, fontsize=label_font)
-        ax.set_ylabel(y_col, fontsize=label_font)
-        ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
-        st.pyplot(fig)
-        add_download_button(fig, chart_title)
-
-    def plot_scatter(df, x_col, y_col):
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        sns.scatterplot(data=df, x=x_col, y=y_col, hue=group_col, palette=palette, ax=ax)
-        ax.set_title(chart_title, fontsize=title_font)
-        ax.set_xlabel(x_col, fontsize=label_font)
-        ax.set_ylabel(y_col, fontsize=label_font)
-        ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
-        st.pyplot(fig)
-        add_download_button(fig, chart_title)
-
-    def plot_area(df, x_col, y_col):
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        ax.fill_between(df[x_col], df[y_col], color=sns.color_palette(palette)[0], alpha=0.5)
-        ax.plot(df[x_col], df[y_col], color=sns.color_palette(palette)[0])
-        ax.set_title(chart_title, fontsize=title_font)
-        ax.set_xlabel(x_col, fontsize=label_font)
-        ax.set_ylabel(y_col, fontsize=label_font)
-        ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
-        st.pyplot(fig)
-        add_download_button(fig, chart_title)
-
-    def plot_violin(df, x_col, y_col):
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        sns.violinplot(data=df, x=x_col, y=y_col, palette=palette, ax=ax)
-        ax.set_title(chart_title, fontsize=title_font)
-        ax.set_xlabel(x_col, fontsize=label_font)
-        ax.set_ylabel(y_col, fontsize=label_font)
-        ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
-        st.pyplot(fig)
-        add_download_button(fig, chart_title)
-
-    def plot_hist(df, value_col):
-        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
-        sns.histplot(df[value_col], bins=bins, kde=True, color=sns.color_palette(palette)[0], ax=ax)
-        ax.set_title(chart_title, fontsize=title_font)
-        ax.set_xlabel(value_col, fontsize=label_font)
-        ax.set_ylabel("Count", fontsize=label_font)
-        ax.tick_params(axis='x', rotation=x_rotation, labelsize=tick_font)
-        st.pyplot(fig)
-        add_download_button(fig, chart_title)
-
-    def plot_pairplot(df):
-        fig = sns.pairplot(df)
-        st.pyplot(fig)
-        st.info("Download Pairplot manually if needed (save as image).")
-
-    # --- Render selected chart ---
+    # Plot based on selection
     if chart_type == "Bar" and group_col and value_col:
-        plot_bar(df, group_col, value_col)
+        plot_bar(df, group_col, value_col, chart_title, group_col, value_col, palette, fig_w, fig_h, title_font, label_font, tick_font, x_rotation)
     elif chart_type == "Boxplot" and group_col and value_col:
-        plot_box(df, group_col, value_col)
-    elif chart_type == "Pie" and group_col and value_col:
-        plot_pie(df, group_col, value_col)
-    elif chart_type == "Line" and group_col and value_col:
-        plot_line(df, group_col, value_col)
-    elif chart_type == "Scatter" and group_col and value_col:
-        plot_scatter(df, group_col, value_col)
-    elif chart_type == "Area" and group_col and value_col:
-        plot_area(df, group_col, value_col)
-    elif chart_type == "Violin" and group_col and value_col:
-        plot_violin(df, group_col, value_col)
+        plot_box(df, group_col, value_col, chart_title, group_col, value_col, palette, fig_w, fig_h, title_font, label_font, tick_font, x_rotation)
     elif chart_type == "Histogram" and value_col:
-        plot_hist(df, value_col)
-    elif chart_type == "Pairplot" and len(df.select_dtypes(include='number').columns) > 1:
-        plot_pairplot(df.select_dtypes(include='number'))
+        plot_hist(df, value_col, chart_title, value_col, "Count", palette, fig_w, fig_h, title_font, label_font, tick_font, bins)
+    elif chart_type == "Pie" and group_col and value_col:
+        plot_pie(df, group_col, value_col, chart_title, donut_width, title_font, tick_font, show_pct)
     else:
         st.warning("Please select appropriate columns for the chosen chart type.")
 
-# --- Footer ---
+# Footer
 st.markdown("---")
 st.markdown("Developed by **Department of Computer Science, Central University of Tamilnadu**. All rights reserved.")
