@@ -232,4 +232,4 @@ if uploaded_file:
 
 # --- Footer ---
 st.markdown("---")
-st.markdown("Developed by **Department of Computer Science, Central University of Tamilnadu**. All rights reserved.")
+st.markdown("Developed by **Department of Computer Science, Central University of Tamilnadu. Created By Subhradeep Sarkar P241321 & Dr. Thiyagarajan P**. All rights reserved.")
