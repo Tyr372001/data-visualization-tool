@@ -1,4 +1,3 @@
-# interactive_feedback_app.py
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -19,10 +18,10 @@ def create_output_dir():
         os.makedirs(OUTPUT_DIR)
 
 def sanitize_filename(name):
-    return re.sub(r'[\\/:"*?<>|]+', '_', str(name)).strip()
+    return re.sub(r'[\\/:"*?<>|]+', '_', name).strip()
 
 def calculate_cumulative_percentage(series):
-    valid = pd.Series(series).dropna()
+    valid = series.dropna()
     score = valid.mean() if len(valid) > 0 else 0
     return (score / 5) * 100  # assuming 5 is max score
 
@@ -30,12 +29,6 @@ def calculate_cumulative_percentage(series):
 def plot_distribution(df_long, course, fig_w, fig_h, title_font, label_font, tick_font,
                       bar_palette, x_rotation, y_max, show_legend, custom_title, x_label, y_label):
     count_df = df_long.groupby(['Question','Response']).size().reset_index(name='Count')
-    if count_df.empty:
-        fig = plt.figure(figsize=(fig_w, fig_h))
-        plt.text(0.5, 0.5, "No distribution data", ha='center', va='center')
-        st.pyplot(fig)
-        return fig
-
     total_per_question = count_df.groupby('Question')['Count'].transform('sum')
     count_df['Percentage'] = count_df['Count'] / total_per_question * 100
     questions = list(pd.Categorical(count_df['Question']).categories)
@@ -62,20 +55,13 @@ def plot_distribution(df_long, course, fig_w, fig_h, title_font, label_font, tic
     if show_legend:
         ax.legend(title='Response (1-5)', bbox_to_anchor=(1.02, 0.5), loc='center left')
     else:
-        if ax.get_legend() is not None:
-            ax.get_legend().remove()
+        ax.get_legend().remove()
 
     st.pyplot(fig)
     return fig
 
 def plot_average_scores(mean_scores, course, fig_w, fig_h, title_font, label_font, tick_font,
                         bar_palette, x_label, y_label, show_legend, custom_title):
-    if mean_scores.empty:
-        fig = plt.figure(figsize=(fig_w, fig_h))
-        plt.text(0.5, 0.5, "No average scores", ha='center', va='center')
-        st.pyplot(fig)
-        return fig
-
     fig, ax = plt.subplots(figsize=(fig_w, fig_h))
     sns.barplot(
         y=mean_scores.index,
@@ -91,8 +77,7 @@ def plot_average_scores(mean_scores, course, fig_w, fig_h, title_font, label_fon
     for container in ax.containers:
         ax.bar_label(container, fmt='%.2f', padding=4)
     if not show_legend:
-        if ax.get_legend() is not None:
-            ax.get_legend().remove()
+        ax.get_legend().remove()
     st.pyplot(fig)
     return fig
 
@@ -122,30 +107,23 @@ def plot_cumulative_pie(course, percent, fig_w, fig_h, donut_width, title_font, 
 
 # --- Course processing ---
 def process_course(df, course, feedback_cols, ui_params):
-    """
-    Processes a single course and returns:
-      - figs: list of matplotlib Figure objects (distribution, average, pie) (may contain fewer than 3)
-      - df_course: the filtered dataframe for that course
-    """
     st.subheader(f"Course: {course}")
     df_course = df[df['COURSE'] == course].copy()
-    figs = []
-
     if df_course.empty:
         st.warning(f"No data for {course}")
-        return figs, df_course
+        return
 
     current_cols = [col for col in feedback_cols if col in df_course.columns]
     if not current_cols:
         st.warning(f"No feedback columns for {course}")
-        return figs, df_course
+        return
 
     df_numeric = df_course[current_cols].apply(pd.to_numeric, errors='coerce')
     df_long = df_numeric.melt(var_name='Question', value_name='Response').dropna()
 
     if not df_long.empty:
         # Distribution chart
-        fig1 = plot_distribution(
+        plot_distribution(
             df_long, course,
             fig_w=ui_params['dist_fig_w'], fig_h=ui_params['dist_fig_h'],
             title_font=ui_params['dist_title_font'], label_font=ui_params['dist_label_font'],
@@ -155,11 +133,10 @@ def process_course(df, course, feedback_cols, ui_params):
             custom_title=ui_params['dist_title'], x_label=ui_params['dist_xlabel'],
             y_label=ui_params['dist_ylabel']
         )
-        figs.append(fig1)
 
         # Average scores chart
         mean_scores = df_numeric.mean().sort_values()
-        fig2 = plot_average_scores(
+        plot_average_scores(
             mean_scores, course,
             fig_w=ui_params['avg_fig_w'], fig_h=ui_params['avg_fig_h'],
             title_font=ui_params['avg_title_font'], label_font=ui_params['avg_label_font'],
@@ -168,13 +145,12 @@ def process_course(df, course, feedback_cols, ui_params):
             show_legend=ui_params['avg_show_legend'],
             custom_title=ui_params['avg_title']
         )
-        figs.append(fig2)
 
         # Cumulative pie
         flat = df_numeric.values.flatten()
         pct = calculate_cumulative_percentage(pd.Series(flat))
         st.info(f"Cumulative Mean Percentage: {pct:.2f}%")
-        fig3 = plot_cumulative_pie(
+        plot_cumulative_pie(
             course, pct,
             fig_w=ui_params['pie_fig_w'], fig_h=ui_params['pie_fig_h'],
             donut_width=ui_params['pie_donut_width'],
@@ -183,11 +159,8 @@ def process_course(df, course, feedback_cols, ui_params):
             custom_title=ui_params['pie_title'],
             color_main=ui_params['pie_color_main'], color_bg=ui_params['pie_color_bg']
         )
-        figs.append(fig3)
     else:
         st.warning(f"No valid numeric responses for {course}")
-
-    return figs, df_course
 
 # --- Streamlit UI ---
 st.title("Interactive Teacher Feedback Visualization Tool")
@@ -264,18 +237,36 @@ if uploaded_file:
         "pie_title": pie_title, "pie_color_main": pie_color_main, "pie_color_bg": pie_color_bg
     }
 
-    # --- Course selection & processing ---
     selected_course = st.selectbox("Select Course to Display", df['COURSE'].unique())
-    figs, df_course = process_course(df, selected_course, feedback_cols, ui_params)
 
-    # --- Download ZIP of charts (all available figs for selected course) ---
-    if figs:
+    # --- capture existing figures before rendering the selected course charts ---
+    _before_figs = set(plt.get_fignums())
+
+    process_course(df, selected_course, feedback_cols, ui_params)
+
+    # --- Download all three charts as a single ZIP ---
+    _after_figs = set(plt.get_fignums())
+    _new_figs = sorted(list(_after_figs - _before_figs))
+
+    # If nothing new found, try to take the last 3 figures in the session as fallback
+    if not _new_figs:
+        _all_figs = sorted(plt.get_fignums())
+        _new_figs = _all_figs[-3:] if len(_all_figs) >= 1 else []
+
+    # Take up to 3 newest figures (distribution, averages, pie in that order if present)
+    _new_figs = _new_figs[-3:]
+
+    if _new_figs:
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
-            # name the files in this order if available
-            preferred_names = ["distribution", "average_scores", "cumulative_pie"]
-            for idx, fig in enumerate(figs):
-                name = preferred_names[idx] if idx < len(preferred_names) else f"chart_{idx+1}"
+            # Prefer descriptive names if we have exactly 3 figures, otherwise name generically
+            if len(_new_figs) == 3:
+                names = ["distribution", "average_scores", "cumulative_pie"]
+            else:
+                names = [f"chart_{i+1}" for i in range(len(_new_figs))]
+
+            for fig_num, name in zip(_new_figs, names):
+                fig = plt.figure(fig_num)
                 img_buf = io.BytesIO()
                 fig.savefig(img_buf, format="png", bbox_inches="tight")
                 img_buf.seek(0)
@@ -289,4 +280,4 @@ if uploaded_file:
             mime="application/zip"
         )
     else:
-        st.info("No charts available to download. Generate visualizations by selecting a Course with valid data.")
+        st.info("No charts available to download yet. Generate the charts by selecting a Course.")
