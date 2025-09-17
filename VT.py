@@ -1,4 +1,4 @@
-# interactive_feedback_app_v3.py
+# interactive_feedback_app.py
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -6,10 +6,12 @@ import seaborn as sns
 import textwrap
 import os
 import re
+import io
+import zipfile
 
 # --- Configuration ---
 METADATA_END_INDEX = 8
-OUTPUT_DIR = "Output_Visuals"
+OUTPUT_DIR = "Teacher_Output"
 
 # --- Utilities ---
 def create_output_dir():
@@ -17,95 +19,102 @@ def create_output_dir():
         os.makedirs(OUTPUT_DIR)
 
 def sanitize_filename(name):
-    return re.sub(r'[\\/:"*?<>|]+', '_', name).strip()
+    return re.sub(r'[\\/:"*?<>|]+', '_', str(name)).strip()
 
 def calculate_cumulative_percentage(series):
-    valid = series.dropna()
+    valid = pd.Series(series).dropna()
     score = valid.mean() if len(valid) > 0 else 0
     return (score / 5) * 100  # assuming 5 is max score
 
 # --- Plotting functions ---
-def plot_distribution(df_long, ui_params):
+def plot_distribution(df_long, course, fig_w, fig_h, title_font, label_font, tick_font,
+                      bar_palette, x_rotation, y_max, show_legend, custom_title, x_label, y_label):
     count_df = df_long.groupby(['Question','Response']).size().reset_index(name='Count')
+    if count_df.empty:
+        fig = plt.figure(figsize=(fig_w, fig_h))
+        plt.text(0.5, 0.5, "No distribution data", ha='center', va='center')
+        st.pyplot(fig)
+        return fig
+
     total_per_question = count_df.groupby('Question')['Count'].transform('sum')
     count_df['Percentage'] = count_df['Count'] / total_per_question * 100
     questions = list(pd.Categorical(count_df['Question']).categories)
     count_df['Question'] = pd.Categorical(count_df['Question'], categories=questions, ordered=True)
 
-    fig, ax = plt.subplots(figsize=(ui_params['dist_fig_w'], ui_params['dist_fig_h']))
-
-    if ui_params['dist_chart_type'] == "Bar Plot":
-        sns.barplot(
-            data=count_df, x='Question', y='Percentage', hue='Response',
-            palette=ui_params['dist_palette'], ax=ax, order=questions, width=ui_params['dist_bar_width']
-        )
-    else:  # Histogram
-        for q in questions:
-            vals = df_long[df_long['Question'] == q]['Response']
-            ax.hist(vals, bins=5, alpha=0.6, label="\n".join(textwrap.wrap(q,25)))
-
-    wrapped_labels = ["\n".join(textwrap.wrap(str(q), 25)) for q in questions]
-    ax.set_xticklabels(wrapped_labels, rotation=ui_params['dist_x_rotation'], ha='center', fontsize=ui_params['dist_tick_font'])
-    ax.set_xlabel(ui_params['dist_xlabel'], fontsize=ui_params['dist_label_font'])
-    ax.set_ylabel(ui_params['dist_ylabel'], fontsize=ui_params['dist_label_font'])
-    ax.set_title(ui_params['dist_title'], fontsize=ui_params['dist_title_font'], pad=16)
-    ax.set_ylim(0, ui_params['dist_y_max'])
-
-    if ui_params['dist_show_legend']:
-        ax.legend(title='Response (1-5)', bbox_to_anchor=(1.02, 0.5), loc='center left')
-    else:
-        ax.get_legend().remove()
-
-    st.pyplot(fig)
-    return fig
-
-def plot_average_scores(mean_scores, ui_params):
-    fig, ax = plt.subplots(figsize=(ui_params['avg_fig_w'], ui_params['avg_fig_h']))
-
-    if ui_params['avg_chart_type'] == "Horizontal Bar":
-        sns.barplot(
-            y=mean_scores.index, x=mean_scores.values, palette=ui_params['avg_palette'],
-            ax=ax, orient='h', width=ui_params['avg_bar_width']
-        )
-        ax.set_xlim(1,5)
-    else:  # Vertical Histogram
-        ax.hist(mean_scores.values, bins=5, alpha=0.7, color='skyblue')
-        ax.set_xlim(1,5)
-
-    ax.set_xlabel(ui_params['avg_xlabel'], fontsize=ui_params['avg_label_font'])
-    ax.set_ylabel(ui_params['avg_ylabel'], fontsize=ui_params['avg_label_font'])
-    ax.set_title(ui_params['avg_title'], fontsize=ui_params['avg_title_font'])
-    ax.tick_params(axis='y', labelsize=ui_params['avg_tick_font'])
-
-    for container in ax.containers:
-        ax.bar_label(container, fmt='%.2f', padding=4)
-
-    if not ui_params['avg_show_legend']:
-        ax.get_legend().remove()
-
-    st.pyplot(fig)
-    return fig
-
-def plot_cumulative_pie(course, percent, ui_params):
-    score = max(min(percent, 100), 0)
-    remainder = 100 - score
-    fig, ax = plt.subplots(figsize=(ui_params['pie_fig_w'], ui_params['pie_fig_h']))
-
-    width = ui_params['pie_donut_width'] if ui_params['pie_type']=="Donut" else 1.0
-    wedges, texts = ax.pie(
-        [score, remainder],
-        labels=['',''],
-        colors=[ui_params['pie_color_main'], ui_params['pie_color_bg']],
-        startangle=90,
-        wedgeprops={'width': width, 'edgecolor':'white'}
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    sns.barplot(
+        data=count_df,
+        x='Question',
+        y='Percentage',
+        hue='Response',
+        palette=bar_palette,
+        ax=ax,
+        order=questions
     )
 
-    if ui_params['pie_show_pct']:
-        ax.text(0,0.05,f'{score:.1f}%', ha='center', va='center',
-                fontsize=ui_params['pie_pct_font'], fontweight='bold', color='black')
-        ax.text(0,-0.18,'Mean Score', ha='center', va='center', fontsize=ui_params['pie_pct_font']-6, color='black')
+    wrapped_labels = ["\n".join(textwrap.wrap(str(q), 25)) for q in questions]
+    ax.set_xticklabels(wrapped_labels, rotation=x_rotation, ha='center', fontsize=tick_font)
+    ax.set_xlabel(x_label, fontsize=label_font)
+    ax.set_ylabel(y_label, fontsize=label_font)
+    ax.set_title(custom_title, fontsize=title_font, pad=16)
+    ax.set_ylim(0, y_max)
 
-    ax.set_title(ui_params['pie_title'], fontsize=ui_params['pie_title_font'], pad=14)
+    if show_legend:
+        ax.legend(title='Response (1-5)', bbox_to_anchor=(1.02, 0.5), loc='center left')
+    else:
+        if ax.get_legend() is not None:
+            ax.get_legend().remove()
+
+    st.pyplot(fig)
+    return fig
+
+def plot_average_scores(mean_scores, course, fig_w, fig_h, title_font, label_font, tick_font,
+                        bar_palette, x_label, y_label, show_legend, custom_title):
+    if mean_scores.empty:
+        fig = plt.figure(figsize=(fig_w, fig_h))
+        plt.text(0.5, 0.5, "No average scores", ha='center', va='center')
+        st.pyplot(fig)
+        return fig
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    sns.barplot(
+        y=mean_scores.index,
+        x=mean_scores.values,
+        palette=bar_palette,
+        ax=ax
+    )
+    ax.set_xlim(1, 5)
+    ax.set_xlabel(x_label, fontsize=label_font)
+    ax.set_ylabel(y_label, fontsize=label_font)
+    ax.set_title(custom_title, fontsize=title_font)
+    ax.tick_params(axis='y', labelsize=tick_font)
+    for container in ax.containers:
+        ax.bar_label(container, fmt='%.2f', padding=4)
+    if not show_legend:
+        if ax.get_legend() is not None:
+            ax.get_legend().remove()
+    st.pyplot(fig)
+    return fig
+
+def plot_cumulative_pie(course, percent, fig_w, fig_h, donut_width, title_font, pct_font,
+                        show_percentage, custom_title, color_main, color_bg):
+    score = max(min(percent, 100), 0)
+    remainder = 100 - score
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    wedges, texts = ax.pie(
+        [score, remainder],
+        labels=['', ''],
+        colors=[color_main, color_bg],
+        startangle=90,
+        wedgeprops={'width': donut_width, 'edgecolor': 'white'}
+    )
+
+    if show_percentage:
+        ax.text(0, 0.05, f'{score:.1f}%', ha='center', va='center',
+                fontsize=pct_font, fontweight='bold', color='black')
+        ax.text(0, -0.18, 'Mean Score', ha='center', va='center', fontsize=pct_font-6, color='black')
+
+    ax.set_title(custom_title, fontsize=title_font, pad=14)
     for t in texts:
         t.set_text('')
     st.pyplot(fig)
@@ -113,39 +122,75 @@ def plot_cumulative_pie(course, percent, ui_params):
 
 # --- Course processing ---
 def process_course(df, course, feedback_cols, ui_params):
+    """
+    Processes a single course and returns:
+      - figs: list of matplotlib Figure objects (distribution, average, pie) (may contain fewer than 3)
+      - df_course: the filtered dataframe for that course
+    """
     st.subheader(f"Course: {course}")
-    df_course = df[df['COURSE']==course].copy()
+    df_course = df[df['COURSE'] == course].copy()
+    figs = []
+
     if df_course.empty:
         st.warning(f"No data for {course}")
-        return
+        return figs, df_course
 
     current_cols = [col for col in feedback_cols if col in df_course.columns]
     if not current_cols:
         st.warning(f"No feedback columns for {course}")
-        return
+        return figs, df_course
 
     df_numeric = df_course[current_cols].apply(pd.to_numeric, errors='coerce')
     df_long = df_numeric.melt(var_name='Question', value_name='Response').dropna()
 
-    # KPI Cards
-    st.markdown("### 📈 Key Metrics")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Mean Score", f"{df_numeric.mean().mean():.2f}")
-    col2.metric("Median Score", f"{df_numeric.median().median():.2f}")
-    col3.metric("Total Responses", f"{df_long.shape[0]}")
-
     if not df_long.empty:
-        plot_distribution(df_long, ui_params)
+        # Distribution chart
+        fig1 = plot_distribution(
+            df_long, course,
+            fig_w=ui_params['dist_fig_w'], fig_h=ui_params['dist_fig_h'],
+            title_font=ui_params['dist_title_font'], label_font=ui_params['dist_label_font'],
+            tick_font=ui_params['dist_tick_font'], bar_palette=ui_params['dist_palette'],
+            x_rotation=ui_params['dist_x_rotation'], y_max=ui_params['dist_y_max'],
+            show_legend=ui_params['dist_show_legend'],
+            custom_title=ui_params['dist_title'], x_label=ui_params['dist_xlabel'],
+            y_label=ui_params['dist_ylabel']
+        )
+        figs.append(fig1)
+
+        # Average scores chart
         mean_scores = df_numeric.mean().sort_values()
-        plot_average_scores(mean_scores, ui_params)
-        pct = calculate_cumulative_percentage(pd.Series(df_numeric.values.flatten()))
+        fig2 = plot_average_scores(
+            mean_scores, course,
+            fig_w=ui_params['avg_fig_w'], fig_h=ui_params['avg_fig_h'],
+            title_font=ui_params['avg_title_font'], label_font=ui_params['avg_label_font'],
+            tick_font=ui_params['avg_tick_font'], bar_palette=ui_params['avg_palette'],
+            x_label=ui_params['avg_xlabel'], y_label=ui_params['avg_ylabel'],
+            show_legend=ui_params['avg_show_legend'],
+            custom_title=ui_params['avg_title']
+        )
+        figs.append(fig2)
+
+        # Cumulative pie
+        flat = df_numeric.values.flatten()
+        pct = calculate_cumulative_percentage(pd.Series(flat))
         st.info(f"Cumulative Mean Percentage: {pct:.2f}%")
-        plot_cumulative_pie(course, pct, ui_params)
+        fig3 = plot_cumulative_pie(
+            course, pct,
+            fig_w=ui_params['pie_fig_w'], fig_h=ui_params['pie_fig_h'],
+            donut_width=ui_params['pie_donut_width'],
+            title_font=ui_params['pie_title_font'], pct_font=ui_params['pie_pct_font'],
+            show_percentage=ui_params['pie_show_pct'],
+            custom_title=ui_params['pie_title'],
+            color_main=ui_params['pie_color_main'], color_bg=ui_params['pie_color_bg']
+        )
+        figs.append(fig3)
     else:
         st.warning(f"No valid numeric responses for {course}")
 
+    return figs, df_course
+
 # --- Streamlit UI ---
-st.title("📊 Interactive Data Visualization Tool")
+st.title("Interactive Teacher Feedback Visualization Tool")
 st.write("Upload CSV and customize charts live!")
 
 uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
@@ -168,68 +213,80 @@ if uploaded_file:
 
     create_output_dir()
 
-    # --- Sidebar with grouped expanders ---
-    st.sidebar.header("⚙️ Customization Panel")
+    # --- Sidebar UI controls ---
+    st.sidebar.header("Customize Distribution Chart")
+    dist_fig_w = st.sidebar.slider("Width", 5, 20, 14)
+    dist_fig_h = st.sidebar.slider("Height", 4, 15, 8)
+    dist_title_font = st.sidebar.slider("Title font", 10, 30, 18)
+    dist_label_font = st.sidebar.slider("Axis label font", 8, 20, 12)
+    dist_tick_font = st.sidebar.slider("Tick label font", 6, 16, 10)
+    dist_palette = st.sidebar.selectbox("Color palette", ["viridis","magma","plasma","coolwarm"])
+    dist_x_rotation = st.sidebar.slider("X-axis rotation", 0, 90, 90)
+    dist_y_max = st.sidebar.slider("Y-axis max", 50, 150, 100)
+    dist_show_legend = st.sidebar.checkbox("Show legend", True)
+    dist_title = st.sidebar.text_input("Custom title", "Response Distribution (% per Question)")
+    dist_xlabel = st.sidebar.text_input("X-axis label", "Feedback Question")
+    dist_ylabel = st.sidebar.text_input("Y-axis label", "Percentage of Responses (%)")
 
-    with st.sidebar.expander("📊 Distribution Chart", expanded=True):
-        dist_chart_type = st.radio("Chart Type", ["Bar Plot","Histogram"], index=0, key="dist_chart_type")
-        dist_bar_width = st.slider("Bar Thickness", 0.1,1.0,0.8, key="dist_bar_width")
-        dist_fig_w = st.slider("Width", 5,20,14, key="dist_fig_w")
-        dist_fig_h = st.slider("Height",4,15,8, key="dist_fig_h")
-        dist_title_font = st.slider("Title Font Size", 10,30,18, key="dist_title_font")
-        dist_label_font = st.slider("Axis Label Font Size",8,20,12, key="dist_label_font")
-        dist_tick_font = st.slider("Tick Label Font Size",6,16,10, key="dist_tick_font")
-        dist_palette = st.selectbox("Color Palette", ["viridis","magma","plasma","coolwarm"], key="dist_palette")
-        dist_x_rotation = st.slider("X-axis Rotation",0,90,90, key="dist_x_rotation")
-        dist_y_max = st.slider("Y-axis Max",50,150,100, key="dist_y_max")
-        dist_show_legend = st.checkbox("Show Legend", True, key="dist_show_legend")
-        dist_title = st.text_input("Custom Title", "Response Distribution (% per Question)", key="dist_title")
-        dist_xlabel = st.text_input("X-axis Label", "Feedback Question", key="dist_xlabel")
-        dist_ylabel = st.text_input("Y-axis Label", "Percentage of Responses (%)", key="dist_ylabel")
+    st.sidebar.header("Customize Average Scores Chart")
+    avg_fig_w = st.sidebar.slider("Width (avg)", 5, 20, 12)
+    avg_fig_h = st.sidebar.slider("Height (avg)", 4, 15, 10)
+    avg_title_font = st.sidebar.slider("Title font (avg)", 10, 30, 16)
+    avg_label_font = st.sidebar.slider("Axis label font (avg)", 8, 20, 12)
+    avg_tick_font = st.sidebar.slider("Tick font (avg)", 6, 16, 10)
+    avg_palette = st.sidebar.selectbox("Color palette (avg)", ["viridis","magma","plasma","coolwarm"], index=0)
+    avg_show_legend = st.sidebar.checkbox("Show legend (avg)", True)
+    avg_title = st.sidebar.text_input("Custom title (avg)", "Average Scores")
+    avg_xlabel = st.sidebar.text_input("X-axis label (avg)", "Average Score (1–5)")
+    avg_ylabel = st.sidebar.text_input("Y-axis label (avg)", "Feedback Question")
 
-    with st.sidebar.expander("📊 Average Scores Chart", expanded=False):
-        avg_chart_type = st.radio("Chart Type", ["Horizontal Bar","Vertical Histogram"], index=0, key="avg_chart_type")
-        avg_bar_width = st.slider("Bar Thickness",0.1,1.0,0.8, key="avg_bar_width")
-        avg_fig_w = st.slider("Width",5,20,12, key="avg_fig_w")
-        avg_fig_h = st.slider("Height",4,15,10, key="avg_fig_h")
-        avg_title_font = st.slider("Title Font Size",10,30,16, key="avg_title_font")
-        avg_label_font = st.slider("Axis Label Font Size",8,20,12, key="avg_label_font")
-        avg_tick_font = st.slider("Tick Label Font Size",6,16,10, key="avg_tick_font")
-        avg_palette = st.selectbox("Color Palette", ["viridis","magma","plasma","coolwarm"], index=0, key="avg_palette")
-        avg_show_legend = st.checkbox("Show Legend", True, key="avg_show_legend")
-        avg_title = st.text_input("Custom Title", "Average Scores", key="avg_title")
-        avg_xlabel = st.text_input("X-axis Label", "Average Score (1–5)", key="avg_xlabel")
-        avg_ylabel = st.text_input("Y-axis Label", "Feedback Question", key="avg_ylabel")
+    st.sidebar.header("Customize Cumulative Pie Chart")
+    pie_fig_w = st.sidebar.slider("Width (pie)", 4, 10, 6)
+    pie_fig_h = st.sidebar.slider("Height (pie)", 4, 10, 6)
+    pie_donut_width = st.sidebar.slider("Donut width", 0.1, 0.9, 0.4)
+    pie_title_font = st.sidebar.slider("Title font (pie)", 10, 30, 16)
+    pie_pct_font = st.sidebar.slider("Percentage font (pie)", 8, 24, 18)
+    pie_show_pct = st.sidebar.checkbox("Show percentage", True)
+    pie_title = st.sidebar.text_input("Custom title (pie)", "Cumulative Mean Score")
+    pie_color_main = st.sidebar.color_picker("Main color", "#43a047")
+    pie_color_bg = st.sidebar.color_picker("Background color", "#e0e0e0")
 
-    with st.sidebar.expander("🥧 Cumulative Pie/Donut Chart", expanded=False):
-        pie_type = st.radio("Chart Type", ["Donut","Pie"], index=0, key="pie_type")
-        pie_donut_width = st.slider("Donut Width",0.1,0.9,0.4, key="pie_donut_width")
-        pie_fig_w = st.slider("Width",4,10,6, key="pie_fig_w")
-        pie_fig_h = st.slider("Height",4,10,6, key="pie_fig_h")
-        pie_title_font = st.slider("Title Font Size",10,30,16, key="pie_title_font")
-        pie_pct_font = st.slider("Percentage Font Size",8,24,18, key="pie_pct_font")
-        pie_show_pct = st.checkbox("Show Percentage", True, key="pie_show_pct")
-        pie_title = st.text_input("Custom Title", "Cumulative Mean Score", key="pie_title")
-        pie_color_main = st.color_picker("Main Color", "#43a047", key="pie_color_main")
-        pie_color_bg = st.color_picker("Background Color", "#e0e0e0", key="pie_color_bg")
-
-    # --- Collect UI parameters ---
     ui_params = {
-        "dist_chart_type": dist_chart_type, "dist_bar_width": dist_bar_width, "dist_fig_w": dist_fig_w, "dist_fig_h": dist_fig_h,
-        "dist_title_font": dist_title_font, "dist_label_font": dist_label_font, "dist_tick_font": dist_tick_font,
-        "dist_palette": dist_palette, "dist_x_rotation": dist_x_rotation, "dist_y_max": dist_y_max,
-        "dist_show_legend": dist_show_legend, "dist_title": dist_title, "dist_xlabel": dist_xlabel, "dist_ylabel": dist_ylabel,
-        "avg_chart_type": avg_chart_type, "avg_bar_width": avg_bar_width, "avg_fig_w": avg_fig_w, "avg_fig_h": avg_fig_h,
-        "avg_title_font": avg_title_font, "avg_label_font": avg_label_font, "avg_tick_font": avg_tick_font, "avg_palette": avg_palette,
+        "dist_fig_w": dist_fig_w, "dist_fig_h": dist_fig_h, "dist_title_font": dist_title_font,
+        "dist_label_font": dist_label_font, "dist_tick_font": dist_tick_font, "dist_palette": dist_palette,
+        "dist_x_rotation": dist_x_rotation, "dist_y_max": dist_y_max, "dist_show_legend": dist_show_legend,
+        "dist_title": dist_title, "dist_xlabel": dist_xlabel, "dist_ylabel": dist_ylabel,
+        "avg_fig_w": avg_fig_w, "avg_fig_h": avg_fig_h, "avg_title_font": avg_title_font,
+        "avg_label_font": avg_label_font, "avg_tick_font": avg_tick_font, "avg_palette": avg_palette,
         "avg_show_legend": avg_show_legend, "avg_title": avg_title, "avg_xlabel": avg_xlabel, "avg_ylabel": avg_ylabel,
-        "pie_type": pie_type, "pie_donut_width": pie_donut_width, "pie_fig_w": pie_fig_w, "pie_fig_h": pie_fig_h,
+        "pie_fig_w": pie_fig_w, "pie_fig_h": pie_fig_h, "pie_donut_width": pie_donut_width,
         "pie_title_font": pie_title_font, "pie_pct_font": pie_pct_font, "pie_show_pct": pie_show_pct,
         "pie_title": pie_title, "pie_color_main": pie_color_main, "pie_color_bg": pie_color_bg
     }
 
-    selected_course = st.selectbox("Select Course to Display", df['COURSE'].unique(), key="selected_course")
-    process_course(df, selected_course, feedback_cols, ui_params)
+    # --- Course selection & processing ---
+    selected_course = st.selectbox("Select Course to Display", df['COURSE'].unique())
+    figs, df_course = process_course(df, selected_course, feedback_cols, ui_params)
 
-# --- Footer ---
-st.markdown("---")
-st.markdown("Developed by **Department of Computer Science, Central University of Tamilnadu. Created By Subhradeep Sarkar P241321 & Dr. Thiyagarajan P**. All rights reserved.")
+    # --- Download ZIP of charts (all available figs for selected course) ---
+    if figs:
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            # name the files in this order if available
+            preferred_names = ["distribution", "average_scores", "cumulative_pie"]
+            for idx, fig in enumerate(figs):
+                name = preferred_names[idx] if idx < len(preferred_names) else f"chart_{idx+1}"
+                img_buf = io.BytesIO()
+                fig.savefig(img_buf, format="png", bbox_inches="tight")
+                img_buf.seek(0)
+                zf.writestr(f"{sanitize_filename(selected_course)}_{name}.png", img_buf.read())
+
+        zip_buffer.seek(0)
+        st.download_button(
+            label=f"📥 Download all charts for {selected_course} (ZIP)",
+            data=zip_buffer.getvalue(),
+            file_name=f"{sanitize_filename(selected_course)}_charts.zip",
+            mime="application/zip"
+        )
+    else:
+        st.info("No charts available to download. Generate visualizations by selecting a Course with valid data.")
