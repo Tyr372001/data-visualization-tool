@@ -325,6 +325,8 @@ def process_course(df, course, feedback_cols, ui_params):
 # --- Streamlit UI ---
 st.set_page_config(page_title="Teacher Feedback Analyzer", page_icon="📊", layout="wide")
 
+
+
 # Custom CSS with Font Awesome and enhanced styling
 st.markdown("""
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -474,7 +476,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="main-header"><h1><i class="fas fa-chart-line"></i> Interactive Teacher Feedback Visualization Tool</h1><p>Upload CSV and customize charts with enhanced navigation and analytics</p></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h1><i class="fas fa-chart-line"></i> Interactive Teacher Feedback Visualization Tool</h1><p>Upload CSV and customize charts with enhanced navigation and analytics</p>Developed By Subhradeep Sarkar, P241321, under the guidance of Dr. P Thiyagarajan, Depatrtment of Computer Science, CUTN<p></p></div>', unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader("📂 Upload CSV file", type=["csv"])
 
@@ -672,3 +674,8 @@ if uploaded_file:
         )
     else:
         st.info("ℹ️ No charts yet — select an item to analyze.")
+
+st.markdown(
+    "<br><hr><p style='text-align:center; color:gray;'>Developed by Subhradeep Sarkar, P241321, Under the Guidance of Dr. P Thiyagarajan, Department of Computer Science, CUTN © 2025</p>",
+    unsafe_allow_html=True
+)
